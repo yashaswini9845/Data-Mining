@@ -1,0 +1,9 @@
+Q1 SALES INGESTION PROOF
+========================
+Source files: 4457
+Rows read before cleaning: 1137585
+Valid rows written: 1137585
+Rows loaded: 1137585
+Duplicate rows removed: 16661
+Rows after deduplication: 1120924
+SHA256: fd0774fd8ae066452b4649d919f5cdc7d7738aabe16f8238111dd511707ab7fc

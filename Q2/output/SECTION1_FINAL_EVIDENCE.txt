@@ -1,0 +1,8 @@
+Q2 SECTION 1 SUMMARY
+A: Normalized word 3-grams with Jaccard similarity
+Raw SAME mean=0.6318, DIFFERENT mean=0.3766
+Normalized SAME mean=0.6354, DIFFERENT mean=0.3773
+Example SAME N010018/N010020: raw=0.2459, cleaned=0.2511
+Example DIFFERENT N007876/N008565: raw=0.2639, cleaned=0.2681
+B: MinHash reduced representation; fixed signature size=256
+Target estimator error=0.05; theoretical worst-case standard deviation at 256 hashes is approximately 0.03125

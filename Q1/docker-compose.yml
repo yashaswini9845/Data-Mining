@@ -1,0 +1,30 @@
+services:
+  postgres:
+    image: postgres:16
+    container_name: q1-postgres
+    environment:
+      POSTGRES_USER: q1
+      POSTGRES_PASSWORD: q1
+      POSTGRES_DB: q1
+    ports:
+      - "5432:5432"
+    volumes:
+       - postgres_data:/var/lib/postgresql/data
+       - ./postgres/init.sql:/docker-entrypoint-initdb.d/init.sql
+
+  minio:
+    image: quay.io/minio/minio
+    container_name: q1-minio
+    environment:
+      MINIO_ROOT_USER: admin
+      MINIO_ROOT_PASSWORD: admin12345
+    ports:
+      - "9000:9000"
+      - "9001:9001"
+    command: server /data --console-address ":9001"
+    volumes:
+      - minio_data:/data
+
+volumes:
+  postgres_data:
+  minio_data:

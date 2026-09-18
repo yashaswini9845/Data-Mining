@@ -1,0 +1,15 @@
+services:
+  postgres:
+    image: postgres:16
+    container_name: q2-postgres
+    environment:
+      POSTGRES_DB: setubid
+      POSTGRES_USER: setubid
+      POSTGRES_PASSWORD: setubid
+    ports:
+      - "5433:5432"
+    volumes:
+      - q2_postgres_data:/var/lib/postgresql/data
+
+volumes:
+  q2_postgres_data:

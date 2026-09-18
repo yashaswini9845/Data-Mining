@@ -1,0 +1,88 @@
+SETUBID Q2 - MEASURED EVIDENCE
+
+DATA
+Notices: 12000
+Labelled pairs: 900
+Same pairs: 279 (31%)
+Different pairs: 621 (69%)
+
+SECTION A - REPRESENTATION
+Representation: normalized word 3-grams with Jaccard similarity.
+
+Raw word 3-gram Jaccard:
+SAME: mean 0.6318, min 0.1881, max 1.0000
+DIFFERENT: mean 0.3766, min 0.1243, max 0.7336
+
+Normalized word 3-gram Jaccard:
+SAME: mean 0.6354, min 0.1920, max 1.0000
+DIFFERENT: mean 0.3773, min 0.1277, max 0.7314
+
+Example SAME pair:
+raw 0.2459
+normalized 0.2511
+
+Example DIFFERENT pair:
+raw 0.2639
+normalized 0.2681
+
+Adoption cost:
+Removing boilerplate, dates, reference numbers and numeric tokens can
+also remove useful distinguishing information, so the representation
+must be validated against the labelled pairs.
+
+SECTION B - APPROXIMATION
+MinHash is used as the reduced representation.
+Signature size: 32 hash values.
+The current implementation uses the MinHash signature to estimate
+Jaccard similarity and LSH for candidate retrieval.
+
+SECTION C - RETRIEVAL
+LSH configuration: 8 bands x 4 rows.
+
+Same labelled pairs: 279
+Same pairs surviving candidate stage: 204
+Candidate recall: 0.7312 = 73.12%
+
+Different labelled pairs: 621
+Different pairs surviving candidate stage: 250
+Different survival rate: 0.4026 = 40.26%
+
+False-merge cost ratio setting: 10
+This is an engineering assumption because no numeric business ratio was
+provided in the supplied task description.
+
+SECTION D - PERSISTENT RELATIONAL RETRIEVAL
+Storage: PostgreSQL.
+Persistent tables include notices, notice_signatures, lsh_buckets,
+opportunities and notice_opportunity.
+
+Index:
+idx_lsh_bucket_lookup on (band_no, bucket_key)
+
+Measured planner path:
+Index Scan using idx_lsh_bucket_lookup
+
+Planning Time: 0.070 ms
+Execution Time: 0.076 ms
+
+The rejected alternative is an in-memory-only retrieval structure because
+it would not remain persistent/queryable by the application across
+restart.
+
+SECTION E - WORK DISTRIBUTION
+Number of LSH buckets: 53289
+Maximum bucket size: 3367
+Average bucket size: 4.5
+Median bucket size: 1
+95th percentile: 10
+99th percentile: 55
+
+The workload is highly uneven because some portals contribute large
+volumes and common portal boilerplate creates highly frequent text
+patterns.
+
+IMPORTANT LIMITATION
+The current measured LSH operating point gives 73.12% candidate recall
+on the 279 labelled SAME pairs. This does not demonstrate a 95% recall
+target. The result should be reported honestly rather than claiming the
+target was met.

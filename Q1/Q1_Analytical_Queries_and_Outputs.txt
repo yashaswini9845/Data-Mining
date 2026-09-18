@@ -1,0 +1,490 @@
+Q1 — Analytical Queries and Output Tables
+
+Annapurna Stores Sales Lakehouse
+
+This file consolidates the recorded Q1 analytical/query evidence in task
+order (A–F). It uses the measured Q1 evidence already produced. No
+data_2/ data is used.
+
+------------------------------------------------------------------------
+
+TASK A — Platform / Partition Query
+
+A1. DuckDB MinIO setup
+
+    INSTALL httpfs;
+    LOAD httpfs;
+
+    CREATE SECRET minio_secret (
+        TYPE S3,
+        KEY_ID 'admin',
+        SECRET 'admin12345',
+        ENDPOINT 'localhost:9000',
+        URL_STYLE 'path',
+        USE_SSL false
+    );
+
+A2. Partition glob query
+
+    SELECT *
+    FROM glob('s3://q1-datalake/raw/sales/store=S01/year=2024/month=10/*');
+
+Output
+
+  Measure                     Result
+  ------------------------ ---------
+  S01 October 2024 files          31
+  S01 October 2024 bytes     846,899
+
+A3. Working partition analytical query
+
+    SELECT
+        COUNT(*) AS rows_in_october_s01,
+        ROUND(SUM(qty * unit_price), 2) AS amount
+    FROM read_csv_auto(
+        's3://q1-datalake/raw/sales/store=S01/year=2024/month=10/*.csv'
+    );
+
+Output
+
+    rows_in_october_s01          amount
+  --------------------- ---------------
+                 13,516   13,991,186.34
+
+Note: this is a raw partition/query demonstration, not the official
+revenue figure. Official revenue uses the line-type rules in Task C.
+
+------------------------------------------------------------------------
+
+TASK B — Safe / Idempotent Ingestion
+
+Task B is an ingestion/repeatability task rather than a business
+analytical query.
+
+B1. Deduplication key
+
+    (bill_no, line_no)
+
+Output
+
+  Measure                          Result
+  --------------------------- -----------
+  Sales files                       4,457
+  Rows read before cleaning     1,137,585
+  Rows loaded                   1,137,585
+  Duplicate rows removed           16,661
+  Rows after deduplication      1,120,924
+
+B2. Three-run proof
+
+  ---------------------------------------------------------------------------------------------------------------------
+  Run                       Rows after deduplication SHA-256
+  --------------------- ---------------------------- ------------------------------------------------------------------
+  Run 1                                    1,120,924 4c08fdb854fbea7d858d1a35f17dc9313fd8b525ab9ec6855121ca230c0ed7f2
+
+  Run 2                                    1,120,924 4c08fdb854fbea7d858d1a35f17dc9313fd8b525ab9ec6855121ca230c0ed7f2
+
+  Run 3                                    1,120,924 4c08fdb854fbea7d858d1a35f17dc9313fd8b525ab9ec6855121ca230c0ed7f2
+  ---------------------------------------------------------------------------------------------------------------------
+
+------------------------------------------------------------------------
+
+TASK C — Analytical Model / Revenue Slicing
+
+C1. Revenue definition
+
+Revenue uses only:
+
+    SALE + RETURN + DISCOUNT + VOID
+
+with:
+
+    SUM(qty * unit_price)
+
+TAX and TENDER are excluded.
+
+Fact table:
+
+    fact_sales
+
+Final fact rows:
+
+    1,120,924
+
+Product matching uses:
+
+    product_code
+    +
+    business_date BETWEEN valid_from AND valid_to
+
+C2. Store revenue output
+
+  Store           Revenue
+  ------- ---------------
+  S01       56,995,199.14
+  S02       47,194,947.02
+  S03       61,864,894.46
+  S04       40,201,258.53
+  S05       30,159,037.54
+  S06       52,584,302.70
+  S07       35,219,585.45
+  S08       34,477,161.43
+  S09       27,978,995.77
+  S10       59,327,041.98
+  S11       32,429,712.91
+  S12       44,433,598.82
+
+C3. Category revenue output
+
+  Category           Revenue
+  ---------- ---------------
+  C01           7,335,274.17
+  C02          39,696,588.61
+  C03          25,805,866.86
+  C04          98,677,244.71
+  C05          82,736,636.78
+  C06          18,408,992.48
+  C07          37,437,446.74
+  C08          28,253,823.00
+  C09          88,746,237.02
+  C10          29,765,097.34
+  C11          12,957,549.04
+  C12          15,314,853.80
+  C13          17,251,020.23
+  C14          25,749,321.35
+
+C4. Weekday revenue output
+
+  Weekday              Revenue
+  ----------- ----------------
+  Monday         59,589,704.80
+  Tuesday        58,523,374.95
+  Wednesday      60,808,849.66
+  Thursday       65,020,714.40
+  Friday         79,012,260.21
+  Saturday      104,941,626.27
+  Sunday         94,969,205.46
+
+C5. Special-code investigation output
+
+  Line / code         Rows   Quantity          Amount
+  --------------- -------- ---------- ---------------
+  DISC DISCOUNT     22,603     22,603   -5,294,511.42
+  DISC VOID            117        117       24,295.04
+
+Unmatched rows investigated:
+
+  Line type     Unmatched rows
+  ----------- ----------------
+  DISCOUNT              22,603
+  TAX                  165,704
+  TENDER               165,704
+  VOID                     117
+  SALE                       0
+  RETURN                     0
+
+------------------------------------------------------------------------
+
+TASK D — Historical Price Revision Query
+
+D1. Price-revision measurements
+
+  Measure                         Result
+  ------------------------- ------------
+  Price revision rows              4,320
+  Products with revisions          1,224
+  Earliest effective date     2022-01-01
+  Latest effective date       9999-12-31
+
+D2. Reusable historical-price query
+
+    WITH reporting_period AS (
+        SELECT
+            DATE '2024-03-01' AS period_start,
+            DATE '2024-03-31' AS period_end
+    )
+    SELECT
+        p.product_code,
+        p.product_name,
+        pr.product_sk,
+        pr.selling_price AS historical_price
+    FROM pg.public.price_revisions pr
+    JOIN pg.public.products p
+        ON pr.product_sk = p.product_sk
+    CROSS JOIN reporting_period r
+    WHERE p.product_code = 'P100005'
+      AND pr.effective_from <= r.period_end
+      AND pr.effective_to >= r.period_start;
+
+D3. Historical-price output
+
+Product:
+
+    P100005 — Thums Up Mango Juice 250g
+    product_sk = 1001
+
+  Reporting period     Historical selling price
+  ------------------ --------------------------
+  March 2024                            ₹103.45
+  October 2024                          ₹114.37
+
+Only the reporting-period dates change for another month.
+
+------------------------------------------------------------------------
+
+TASK E — Federated Query
+
+E1. PostgreSQL master counts
+
+  Master data     Count
+  ------------- -------
+  Stores             12
+  Products        1,224
+  Categories         14
+
+Sales Parquet rows:
+
+    1,120,924
+
+E2. Federated category query
+
+    SELECT
+        p.category_id,
+        c.category_name,
+        COUNT(*) AS sales_lines,
+        ROUND(
+            SUM(
+                CASE
+                    WHEN s.line_type IN
+                         ('SALE','RETURN','DISCOUNT','VOID')
+                    THEN s.qty * s.unit_price
+                    ELSE 0
+                END
+            ), 2
+        ) AS revenue
+    FROM read_parquet(
+        'output/sales_canonical.parquet'
+    ) s
+    JOIN pg.public.products p
+        ON s.product_code = p.product_code
+       AND s.business_date BETWEEN p.valid_from AND p.valid_to
+    JOIN pg.public.product_categories c
+        ON p.category_id = c.category_id
+    WHERE s.line_type IN
+          ('SALE','RETURN','DISCOUNT','VOID')
+    GROUP BY p.category_id, c.category_name
+    ORDER BY p.category_id;
+
+Category output
+
+  Category   Category name             Sales lines         Revenue
+  ---------- ----------------------- ------------- ---------------
+  C01        Biscuits & Snacks              54,244    7,335,274.17
+  C02        Dairy                          60,998   39,696,588.61
+  C03        Beverages                      50,685   25,805,866.86
+  C04        Staples & Grains               59,961   98,677,244.71
+  C05        Edible Oils                    56,221   82,736,636.78
+  C06        Spices & Masala                51,566   18,408,992.48
+  C07        Personal Care                  46,864   37,437,446.74
+  C08        Home Care                      47,218   28,253,823.00
+  C09        Baby Care                      57,216   88,746,237.02
+  C10        Frozen & Ready to Eat          57,609   29,765,097.34
+  C11        Bakery                         59,835   12,957,549.04
+  C12        Fruits & Vegetables            55,356   15,314,853.80
+  C13        Confectionery                  53,385   17,251,020.23
+  C14        Stationery & General           55,638   25,749,321.35
+
+E3. Federated store output
+
+  Store   Store name                   Sales lines         Revenue
+  ------- -------------------------- ------------- ---------------
+  S01     Annapurna Jayanagar               86,121   56,995,199.14
+  S02     Annapurna Koramangala             70,538   47,194,947.02
+  S03     Annapurna T Nagar                 93,882   61,864,894.46
+  S04     Annapurna Kukatpally              60,976   40,201,258.53
+  S05     Annapurna Kochi Marine            45,239   30,159,037.54
+  S06     Annapurna Andheri West            79,187   52,584,302.70
+  S07     Annapurna Baner                   53,084   35,219,585.45
+  S08     Annapurna Satellite               52,314   34,477,161.43
+  S09     Annapurna Vaishali                42,177   27,978,995.77
+  S10     Annapurna Rajouri Garden          89,918   59,327,041.98
+  S11     Annapurna Gomti Nagar             48,594   32,429,712.91
+  S12     Annapurna Salt Lake               67,486   44,433,598.82
+
+E4. EXPLAIN physical-plan evidence
+
+Category query:
+
+    READ_PARQUET
+    POSTGRES_SCAN (products)
+    POSTGRES_SCAN (product_categories)
+    HASH_JOIN
+    HASH_GROUP_BY
+    ORDER_BY
+
+Store query:
+
+    READ_PARQUET
+    POSTGRES_SCAN (stores)
+    HASH_JOIN
+    HASH_GROUP_BY
+    ORDER_BY
+
+Category join conditions:
+
+    product_code = product_code
+    business_date >= valid_from
+    business_date <= valid_to
+
+The recorded plan estimates were:
+
+  Source           Estimated rows
+  -------------- ----------------
+  READ_PARQUET         ~1,120,924
+  products                 ~1,264
+  categories                 ~148
+
+------------------------------------------------------------------------
+
+TASK F — Finance Reconciliation
+
+F1. Revenue definition used
+
+    SALE + RETURN + DISCOUNT + VOID
+
+Excluded:
+
+    TAX + TENDER
+
+F2. Monthly reconciliation output
+
+  ----------------------------------------------------------------------------
+  Month              Pipeline         Finance      Difference Classification
+  ----------- --------------- --------------- --------------- ----------------
+  2024-01       38,446,071.33   38,446,071.33            0.00 match
+
+  2024-02       34,887,085.55   34,887,085.55            0.00 match
+
+  2024-03       41,971,649.09   42,457,899.09     -486,250.00 requires further
+                                                              investigation
+
+  2024-04       37,958,457.37   37,958,457.37            0.00 match
+
+  2024-05       41,764,716.40   41,764,716.40            0.00 match
+
+  2024-06       38,987,082.82   38,987,082.82            0.00 match
+
+  2024-07       40,295,160.11   40,527,291.81     -232,131.70 source data
+                                                              problem
+
+  2024-08       45,252,181.75   45,252,181.75            0.00 match
+
+  2024-09       44,615,037.46   44,615,037.46            0.00 match
+
+  2024-10       56,359,195.92   56,359,195.92            0.00 match
+
+  2024-11       51,583,838.47   51,583,838.47            0.00 match
+
+  2024-12       50,745,259.48   50,745,209.00           50.48 requires further
+                                                              investigation
+  ----------------------------------------------------------------------------
+
+F3. March investigation
+
+  Measure                                Result
+  ----------------------------- ---------------
+  DISCOUNT                          -422,529.83
+  RETURN                            -872,421.34
+  SALE                            43,570,195.04
+  TAX                              3,671,749.71
+  TENDER                          45,643,398.80
+  VOID                              -303,594.78
+  Duplicate revenue line keys                 0
+  Files                                     374
+  First date                         2024-03-01
+  Last date                          2024-03-31
+  Stores present                             12
+  Business days                              31
+  Difference                        ₹486,250.00
+
+Classification:
+
+    REQUIRES FURTHER INVESTIGATION
+
+F4. July investigation
+
+Known source-data gap:
+
+    S07 lost till server for 3 days in July 2024.
+    Exports are absent.
+    Finance contains those numbers.
+
+  Measure                                                        Result
+  -------------------------------- ------------------------------------
+  S07 July business days present                                     28
+  Expected                                                           31
+  Missing dates                      2024-07-09, 2024-07-10, 2024-07-11
+  S07 July revenue present                                ₹2,651,159.69
+  Difference                                                ₹232,131.70
+
+Classification:
+
+    SOURCE DATA PROBLEM
+
+F5. December investigation
+
+  Measure                                 Result
+  ----------------------------- ----------------
+  DISCOUNT                           -512,901.24
+  RETURN                           -1,144,992.16
+  SALE                             52,692,638.60
+  TAX                               4,446,582.31
+  TENDER                           55,191,841.79
+  VOID                               -289,485.72
+  Duplicate revenue line keys                  0
+  Pipeline                        ₹50,745,259.48
+  Finance                         ₹50,745,209.00
+  Difference                              ₹50.48
+
+Classification:
+
+    REQUIRES FURTHER INVESTIGATION
+
+------------------------------------------------------------------------
+
+QUICK REFERENCE — Q1 MEASURED RESULTS
+
+  Item                             Result
+  --------------------------- -----------
+  Input sales files                 4,457
+  Rows before deduplication     1,137,585
+  Duplicate rows removed           16,661
+  Final fact/canonical rows     1,120,924
+  Stores                               12
+  Products                          1,224
+  Categories                           14
+  Price revision rows               4,320
+  Products with revisions           1,224
+  S01 October files                    31
+  S01 October bytes               846,899
+
+Important Q1 outputs
+
+    output/sales_canonical.csv
+    output/sales_canonical.parquet
+    output/q1_sales.duckdb
+    output/ingestion_proof.txt
+    output/proof_run1_corrected.txt
+    output/proof_run2_corrected.txt
+    output/proof_run3_corrected.txt
+    output/Q1_EVIDENCE_A_TO_F.txt
+
+Note on query completeness
+
+The recorded Q1 evidence explicitly preserves the SQL for the Task A
+partition query, Task D historical-price query, and Task E federated
+category query. The source evidence records the Task C
+store/category/weekday analytical outputs and Task E store federated
+results, but does not preserve separate SQL text for every one of those
+output tables. This file therefore does not invent SQL for queries whose
+exact original text was not recorded.

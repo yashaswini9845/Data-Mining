@@ -1,0 +1,285 @@
+# Q2 — Analytical Queries and Measured Outputs
+
+## Q2 data counts
+
+### Count notices
+```sql
+SELECT COUNT(*) AS notice_count
+FROM notices;
+```
+
+Measured:
+`12000`
+
+### Count labelled pairs
+```sql
+SELECT COUNT(*) AS labelled_pairs
+FROM labelled_pairs;
+```
+
+Measured:
+`900`
+
+### Label skew
+```sql
+SELECT label, COUNT(*) AS pair_count,
+       ROUND(100.0 * COUNT(*) / SUM(COUNT(*)) OVER (), 2) AS percentage
+FROM labelled_pairs
+GROUP BY label
+ORDER BY label;
+```
+
+Measured:
+- different = 621 = 69%
+- same = 279 = 31%
+
+---
+
+# Section A — Representation
+
+## Exact Jaccard of normalized word 3-grams
+
+```sql
+SELECT
+    lp.label,
+    COUNT(*) AS pairs
+FROM labelled_pairs lp
+JOIN notice_signatures a
+  ON a.notice_id = lp.notice_id_a
+JOIN notice_signatures b
+  ON b.notice_id = lp.notice_id_b
+GROUP BY lp.label;
+```
+
+The Python measurement calculates exact Jaccard from `normalized_text`:
+
+```text
+J(A,B) = |A ∩ B| / |A ∪ B|
+```
+
+Measured normalized word 3-gram Jaccard:
+
+SAME:
+- mean 0.6354
+- min 0.1920
+- max 1.0000
+
+DIFFERENT:
+- mean 0.3773
+- min 0.1277
+- max 0.7314
+
+---
+
+# Section B — MinHash error
+
+MinHash signature configuration:
+
+```text
+NUM_HASHES = 32
+```
+
+For each labelled pair:
+
+```text
+estimated_similarity =
+number of equal MinHash components / 32
+```
+
+Measured:
+
+```text
+Pairs = 900
+Mean absolute error = 0.0556
+Maximum absolute error = 0.2515
+```
+
+Formula:
+
+```text
+MAE = mean(|estimated_similarity - exact_jaccard|)
+```
+
+---
+
+# Section C — LSH candidate retrieval
+
+Configuration:
+
+```text
+BANDS = 8
+ROWS_PER_BAND = 4
+TOTAL_HASHES = 32
+```
+
+A pair survives when at least one band produces the same bucket key.
+
+## Labelled-pair result
+
+```text
+SAME:
+204 / 279 = 73.12%
+
+DIFFERENT:
+250 / 621 = 40.26%
+```
+
+## Survival by exact similarity
+
+```text
+0.1–0.2 : 0 / 101   = 0.00%
+0.2–0.3 : 1 / 148   = 0.68%
+0.3–0.4 : 22 / 96   = 22.92%
+0.4–0.5 : 80 / 159  = 50.31%
+0.5–0.6 : 154 / 189 = 81.48%
+0.6–0.7 : 82 / 92   = 89.13%
+0.7–0.8 : 18 / 18   = 100.00%
+0.8–0.9 : 26 / 26   = 100.00%
+0.9–1.0 : 71 / 71   = 100.00%
+```
+
+---
+
+# Section D — PostgreSQL planner
+
+## Indexed candidate lookup
+
+```sql
+EXPLAIN (ANALYZE, BUFFERS)
+SELECT notice_id
+FROM lsh_buckets
+WHERE band_no = 0
+  AND bucket_key = (
+      SELECT bucket_key
+      FROM lsh_buckets
+      WHERE band_no = 0
+      LIMIT 1
+  );
+```
+
+Measured plan:
+
+```text
+Index Scan using idx_lsh_bucket_lookup on lsh_buckets
+
+Planning Time: 0.058 ms
+Execution Time: 0.063 ms
+Buffers: shared hit=40
+```
+
+Index:
+
+```sql
+CREATE INDEX idx_lsh_bucket_lookup
+ON lsh_buckets (band_no, bucket_key);
+```
+
+---
+
+# Section E — Bucket work distribution
+
+```sql
+SELECT
+    band_no,
+    bucket_key,
+    COUNT(*) AS bucket_size
+FROM lsh_buckets
+GROUP BY band_no, bucket_key
+ORDER BY bucket_size DESC;
+```
+
+Measured distribution:
+
+```text
+Buckets: 53289
+Maximum bucket size: 3367
+Average bucket size: 4.5
+Median bucket size: 1
+95th percentile: 10
+99th percentile: 55
+```
+
+## Mitigation
+
+Rule:
+
+```text
+Ignore LSH buckets containing more than 100 notices.
+```
+
+Measured label effect:
+
+Before:
+```text
+SAME: 204 / 279 = 73.12%
+DIFFERENT: 250 / 621 = 40.26%
+```
+
+After:
+```text
+SAME: 164 / 279 = 58.78%
+DIFFERENT: 28 / 621 = 4.51%
+```
+
+Large buckets affected:
+`282`
+
+Interpretation:
+The mitigation reduces large candidate lists and sharply reduces DIFFERENT-pair survival, but it costs SAME-pair recall. The quality cost must therefore be reported.
+
+---
+
+# Useful viva queries
+
+## Show table sizes
+
+```sql
+SELECT 'notices' AS table_name, COUNT(*) FROM notices
+UNION ALL
+SELECT 'labelled_pairs', COUNT(*) FROM labelled_pairs
+UNION ALL
+SELECT 'notice_signatures', COUNT(*) FROM notice_signatures
+UNION ALL
+SELECT 'lsh_buckets', COUNT(*) FROM lsh_buckets;
+```
+
+## Show indexes
+
+```sql
+SELECT tablename, indexname, indexdef
+FROM pg_indexes
+WHERE tablename = 'lsh_buckets';
+```
+
+## Show settings
+
+```sql
+SELECT *
+FROM settings
+ORDER BY key;
+```
+
+Expected settings include:
+
+```text
+false_merge_cost_ratio = 10
+retrieval_target_recall = 0.95
+```
+
+## Inspect an opportunity mapping
+
+```sql
+SELECT no.notice_id, no.opportunity_id
+FROM notice_opportunity no
+ORDER BY no.opportunity_id, no.notice_id
+LIMIT 20;
+```
+
+## Count notices mapped to opportunities
+
+```sql
+SELECT opportunity_id, COUNT(*) AS notice_count
+FROM notice_opportunity
+GROUP BY opportunity_id
+ORDER BY notice_count DESC;
+```
